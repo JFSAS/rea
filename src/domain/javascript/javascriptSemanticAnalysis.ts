@@ -1307,7 +1307,7 @@ const addBinding = (input: AddBindingInput): void => {
   let binding = scope.bindings.get(name);
   if (binding === undefined) {
     if (!scope.bindingsComplete) return;
-    binding = createBinding(scope, name, kind, mutable);
+    binding = createBinding(scope, name, kind, mutable, definitionNode);
     scope.bindings.set(name, binding);
     state.bindingsById.set(binding.bindingId, binding);
   }
@@ -1333,10 +1333,12 @@ const createBinding = (
   name: string,
   kind: JavaScriptSemanticDefinition["kind"],
   mutable: boolean,
+  declaration: t.Node,
 ): JavaScriptSemanticBindingState => ({
   bindingId: semanticBindingId(scope.scopeId, name),
   scopeId: scope.scopeId,
   name,
+  declaration,
   kind,
   mutable,
   mutatedPaths: [],

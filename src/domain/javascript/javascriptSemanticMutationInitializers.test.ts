@@ -46,6 +46,7 @@ describe("parameter references copied into function body bindings", () => {
         bindingId: "body:arg",
         scopeId: "body",
         name: "arg",
+        declaration: parameter.left,
         kind: "variable",
         mutable: true,
         mutatedPaths: [],

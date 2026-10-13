@@ -62,6 +62,26 @@ it("does not treat a same-named shadow as the factory exports parameter", () => 
   ]);
 });
 
+it("uses factory binding identity for require rather than its enclosing range", () => {
+  const analysis =
+    analyzeJavaScriptStaticSource(`globalThis.webpackChunkApp.push([[1], {
+    main(module, exports, require) {
+      require(2);
+      function local(require) { require(3); }
+    }
+  }]);`);
+  expect(
+    analysis.references.map(({ specifier, expression, module_key }) => ({
+      specifier,
+      expression,
+      module_key,
+    })),
+  ).toEqual([
+    { specifier: "2", expression: null, module_key: "main" },
+    { specifier: null, expression: "require(3)", module_key: "main" },
+  ]);
+});
+
 it("does not confuse a shadowed dispatch table with the outer module table", () => {
   const analysis = analyzeJavaScriptStaticSource(`(() => {
     const modules = { 17(module) { module.exports = require("electron"); } };

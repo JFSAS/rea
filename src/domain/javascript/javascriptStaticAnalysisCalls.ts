@@ -30,11 +30,17 @@ import type {
   JavaScriptEndpointInput as EndpointInput,
   JavaScriptFindingContext as FindingContext,
   JavaScriptReferenceInput as ReferenceInput,
+  JavaScriptModuleRange,
 } from "./javascriptStaticAnalysisState.js";
 import {
   resolveSemanticBindingState,
+  semanticResolutionBlocked,
+  semanticScopeId,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+import { evaluateSemanticProvenance } from "./javascriptSemanticValues.js";
+import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
 import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
@@ -58,12 +64,16 @@ export const inspectCall = (
   const module = context.accumulator.moduleRangeIndex.find(node.start);
   const moduleRequireName = module?.requireName ?? null;
   const requireCall = requireCallSpecifier(node, name, moduleRequireName);
-  if (requireCall !== null)
+  if (requireCall !== null) {
+    const unresolved =
+      name === "require" &&
+      !canInferRequireTarget(node.callee, bindings, module);
     addReference(context, {
       node,
       kind: "require",
-      specifier: requireCall.specifier,
+      specifier: unresolved ? undefined : requireCall.specifier,
     });
+  }
   const chunkLoad = chunkLoadSpecifier(node, name, moduleRequireName);
   if (chunkLoad !== null)
     addReference(context, {
@@ -128,6 +138,75 @@ export const inspectCall = (
         location: range(node),
       },
     });
+};
+
+// A name is a loader convention only while lexical lookup does not contradict
+// it. Bound calls need source provenance; other values remain unresolved facts.
+const canInferRequireTarget = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  module: JavaScriptModuleRange | undefined,
+): boolean => {
+  const binding = resolveSemanticBindingState(state, callee, "require");
+  if (binding === undefined)
+    return !semanticResolutionBlocked(state, callee, "require");
+  if (
+    binding.definitions.some(
+      ({ kind }) => kind === "function" || kind === "class",
+    )
+  )
+    return false;
+  if (
+    module?.requireName === "require" &&
+    binding.scopeId === semanticScopeId("function", module)
+  )
+    return true;
+  if (
+    binding.kind === "variable" &&
+    state.scopesById.get(binding.scopeId)?.kind === "program" &&
+    binding.definitions.every(
+      ({ kind }) => kind === "variable" || kind === "assignment",
+    )
+  ) {
+    let declaration: t.Node | undefined = binding.declaration;
+    while (declaration !== undefined && !t.isStatement(declaration))
+      declaration = state.parentsByNode.get(declaration);
+    // A program var can redeclare Node's wrapper parameter. Its runtime value
+    // is not established here, just as for an unbound conventional require.
+    if (t.isVariableDeclaration(declaration, { kind: "var" })) return true;
+  }
+  const initializer = semanticStableInitializer(binding, state);
+  if (initializer === undefined || initializer.projection.length !== 0)
+    return false;
+  const value = unwrapJavaScriptExpression(initializer.node).node;
+  if (
+    (!t.isCallExpression(value) && !t.isOptionalCallExpression(value)) ||
+    !isUnmodifiedImportMetaUrl(argumentNode(value.arguments[0]), state)
+  )
+    return false;
+  let factory = unwrapJavaScriptExpression(value.callee).node;
+  const members: string[] = [];
+  if (t.isMemberExpression(factory) || t.isOptionalMemberExpression(factory)) {
+    const member = semanticStaticPropertyName(
+      factory.property,
+      factory.computed,
+    );
+    if (member === null) return false;
+    members.push(member);
+    factory = unwrapJavaScriptExpression(factory.object).node;
+  }
+  if (!t.isIdentifier(factory)) return false;
+  const imported = resolveSemanticBindingState(state, factory, factory.name);
+  if (imported === undefined) return false;
+  const provenance = evaluateSemanticProvenance(imported, state);
+  if (provenance.status !== "module") return false;
+  const origin = provenance.origins[0];
+  const path = [...origin.importedPath, ...members];
+  return (
+    (origin.specifier === "node:module" || origin.specifier === "module") &&
+    path.at(-1) === "createRequire" &&
+    semanticBuiltinNamespacePath(path.slice(0, -1))
+  );
 };
 
 const workerUrlSpecifier = (

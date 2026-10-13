@@ -36,6 +36,8 @@ export interface JavaScriptSemanticBindingState {
   readonly bindingId: string;
   readonly scopeId: string;
   readonly name: string;
+  /** Source declaration retained for on-demand binding-kind queries. */
+  readonly declaration: t.Node;
   kind: JavaScriptSemanticDefinition["kind"];
   mutable: boolean;
   readonly mutatedPaths: JavaScriptSemanticPropertyPath[];
@@ -121,7 +123,7 @@ export const currentSemanticScope = (
 /** Create a stable source-position identity for one lexical scope. */
 export const semanticScopeId = (
   kind: JavaScriptSemanticScope["kind"],
-  node: t.Node,
+  node: Pick<t.Node, "start" | "end">,
 ): string =>
   `scope:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`;
 
